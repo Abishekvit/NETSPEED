@@ -1,0 +1,7 @@
+{
+  "name": "NetPulse: Campus Speed Predictor",
+  "description": "Predict and track campus network speeds using ML-driven location and time-context analysis.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
