@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -130,40 +130,59 @@ const LandingPage = ({ onStart }: { onStart: () => void }) => {
 };
 
 const Dashboard = () => {
+  const controllerRef = useRef<AbortController | null>(null);
   const [userLoc, setUserLoc] = useState<UserLocation | null>(null);
   const [prediction, setPrediction] = useState<number | null>(null);
   const [bestNearby, setBestNearby] = useState<Prediction[]>([]);
   const [dayType, setDayType] = useState('Weekday');
   const [isLoading, setIsLoading] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedHour, setSelectedHour] = useState(new Date().getHours());
 
-  // Update time every minute
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
-    return () => clearInterval(timer);
-  }, []);
 
-  const fetchPrediction = async (lat: number, lon: number) => {
-    setIsLoading(true);
-    try {
-      const hour = currentTime.getHours();
-      const res = await fetch('/api/predict', {
+const fetchPrediction = async (lat: number, lon: number, selectedDay?: string) => {
+  const activeDay = selectedDay || dayType;
+  const hour = currentTime.getHours();
+
+  // Cancel previous request
+  if (controllerRef.current) {
+    controllerRef.current.abort();
+  }
+
+  const controller = new AbortController();
+  controllerRef.current = controller;
+
+  setIsLoading(true);
+
+  try {
+    const [predRes, bestRes] = await Promise.all([
+      fetch('/api/predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat, lon, hour, dayType })
-      });
-      const data = await res.json();
-      setPrediction(data.speed);
+        body: JSON.stringify({ lat, lon, hour, dayType: activeDay }),
+        signal: controller.signal
+      }),
+      fetch(`/api/best-nearby?lat=${lat}&lon=${lon}&hour=${hour}&dayType=${activeDay}`, {
+        signal: controller.signal
+      })
+    ]);
 
-      const bestRes = await fetch(`/api/best-nearby?lat=${lat}&lon=${lon}&hour=${hour}&dayType=${dayType}`);
-      const bestData = await bestRes.json();
-      setBestNearby(bestData);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoading(false);
+    if (!predRes.ok || !bestRes.ok) return;
+
+    const data = await predRes.json();
+    const bestData = await bestRes.json();
+
+    setPrediction(data.speed);
+    setBestNearby(bestData);
+
+  } catch (err: any) {
+    if (err.name !== "AbortError") {
+      console.error("Fetch error:", err);
     }
-  };
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const handleTrackLocation = () => {
     if (!navigator.geolocation) return;
@@ -216,22 +235,27 @@ const Dashboard = () => {
             <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Simulation Controls</label>
             <div className="flex flex-wrap gap-2">
               {['Weekday', 'Weekend', 'Event'].map((type) => (
-                <button
-                  key={type}
-                  onClick={() => {
-                    setDayType(type);
-                    if (userLoc) fetchPrediction(userLoc.lat, userLoc.lon);
-                  }}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-xs font-medium transition-all",
-                    dayType === type 
-                      ? "bg-emerald-500 text-black" 
-                      : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-                  )}
-                >
-                  {type}
-                </button>
-              ))}
+              <button
+                key={type}
+                onClick={() => {
+                  setDayType(type);
+
+                  if (userLoc) {
+                    fetchPrediction(userLoc.lat, userLoc.lon, type);
+                  } else {
+                    alert("Please track location first.");
+                  }
+                }}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-medium transition-all",
+                  dayType === type 
+                    ? "bg-emerald-500 text-black" 
+                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                )}
+              >
+                {type}
+              </button>
+            ))}
             </div>
           </section>
 
